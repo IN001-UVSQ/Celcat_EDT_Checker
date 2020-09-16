@@ -1,20 +1,15 @@
-# guardian.py
+# basic_bot.py
 
-import os, random, time, json
-
-import requests, json, html
-from datetime import datetime, timedelta
+import json, requests, html
 
 import discord
 from discord.ext import commands
 
-
 bot = commands.Bot(command_prefix=";")
 
-# Initialisation des dossiers et fichiers au démarrage du Bot - seulement s'ils n'existent pas
 @bot.event
 async def on_ready():
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"Test CELCAT"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f"Basic bot code"))
     # Importation du module
     try:
         bot.load_extension("EDT")
@@ -22,6 +17,7 @@ async def on_ready():
         print('{}: {}'.format(type(e).__name__, e))
 
     print(f'Logged in as {bot.user.name} on {len(bot.guilds)} servers')
+
 
 #### Load - Unload - Reload an extension
 @bot.command(name='reload')
