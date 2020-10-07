@@ -1,4 +1,4 @@
-## Welcome to GitHub Pages
+## AdabGuardian — Celcat EDT Checker
 
 You can use the [editor on GitHub](https://github.com/vdElyn/Celcat_EDT_Checker/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
 
