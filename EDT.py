@@ -1,10 +1,14 @@
-# EDT.py
-
 import discord
 from discord.ext import commands
 
 import requests, json, html, re
 from datetime import datetime, timedelta
+
+# Remote course: Displaying Zoom links with the calendar
+zoom_links = {
+    "IN603":     "https://uvsq-fr.zoom.us/j/XXXXXXXXX?pwd=XXXXXXXXXXXXXXXXX",
+    "IN606_TD1": "https://uvsq-fr.zoom.us/j/XXXXXXXXX?pwd=XXXXXXXXXXXXXXXXX"
+}
 
 # Just a check to limit these commands to the authorized guilds
 def usage_check(ctx):
@@ -14,10 +18,16 @@ def usage_check(ctx):
 # Main request function, return a formatted array of modules (dicts)
 # @start_date @end_date : First and last day of the requested calendar
 # @TD : Group class
-def request_td_edt(start_date, end_date, TD):
+def request_td_edt(start_date, end_date, TD, LIC):
     url = 'https://edt.uvsq.fr/Home/GetCalendarData'
-    TDList = ["S5 INFO TD 1","S5 INFO TD 2","S5 INFO TD 3","S5 INFO TD 4"]
-    global_edt = []
+    if LIC == 3:
+        # TODO: Automate even/odd semester's deduction
+        TDList = ["S6 INFO TD01","S6 INFO TD02","S6 INFO TD03","S6 INFO TD04"]
+    elif LIC == 2:
+        TDList = ["S4 INFO TD01","S4 INFO TD02","S4 INFO TD03","S4 INFO TD04"]
+    else: # M1
+        TDList = ["M1 SECRETS", "M1 AMIS", "M1 SECRETS", "M1 SECRETS"]
+
 
     data = {'start':start_date,'end':end_date,'resType':'103','calView':'agendaDay','federationIds[]':TDList[TD]}
     response = requests.post(url,data=data)
@@ -43,9 +53,30 @@ def request_td_edt(start_date, end_date, TD):
             "module":description.split("¨")[2],
             "groupes":description.split("¨")[3]
         }
-        modules.append(sub_data)
+
+        # Remote course: We don't append the on-moodle-TD to avoid the double displaying
+        if "TD" in sub_data["type"] and "MOODLE" in sub_data["salle"]:
+            continue
+        else:
+            modules.append(sub_data)
+
     # Sort the modules array by in ascending order of schedules
     modules = sorted(modules, key=lambda sub_data: sub_data["horaire"])
+    
+    # Remote course: Adding zoom CM & TD links next to Module's names
+    for module in modules:
+        module["module"] = module["module"][:len(module["module"])-11]
+        # if 'CM' in  module['type']:
+        #     for zm in zoom_links:
+        #         if zm in module['module']:
+        #             module['module'] += f"\n[Lien Zoom disponible!]({zoom_links[zm]})"
+   
+        # elif 'TD' in module['type']:
+        #     formatted = f"{module['module'][:5]}_TD{TD+1}"
+        #     if formatted in zoom_links:
+        #         module['module'] += f"\n[Lien Zoom disponible!]({zoom_links[formatted]})"
+
+
     return modules
 
 # Return a specific thumbnail for each @weekday
@@ -72,15 +103,20 @@ def jour_de_la_semaine(start_date):
 
     return "{} {:0>2d}/{:0>2d}".format(day, start_date.day, start_date.month)
 
+def calculate_duration(modules):
+    # TODO: Calculate total courses duration for a given day 
+    return 'X'
+
 # Interpret the @daydate from the user's command and return two datetime objects @start_date & @end_date
 def date_formatting(daydate):
     # start_date = str(datetime.now())[:10] if daydate == None else '2020-{}-{}'.format(daydate.split("/")[1], daydate.split("/")[0])
     if daydate == None:
         start_date = str(datetime.now())[:10]
-    elif int(daydate.split("/")[1]) > 9:
-        start_date = '2020-{}-{}'.format(daydate.split("/")[1], daydate.split("/")[0])
-    else:
+    elif int(daydate.split("/")[1]) > 8:
+        # TODO: Automate the current year's deduction
         start_date = '2021-{}-{}'.format(daydate.split("/")[1], daydate.split("/")[0])
+    else:
+        start_date = '2022-{}-{}'.format(daydate.split("/")[1], daydate.split("/")[0])
 
     try:
         start_date = datetime.strptime(start_date, "%Y-%m-%d")
@@ -89,71 +125,165 @@ def date_formatting(daydate):
     except Exception as e:
         return -1
 
+# Remote course: checks and returns the actual week  
+# def get_semaine(modules):
+#     for module in modules:
+#         if "TD" in module["type"]:
+#             if "A" in module["groupes"]:
+#                 return "Semaine A"
+#             else:
+#                 return "Semaine B"
+#     return ""
+
+def get_m1_group(module):
+    if 'gr 1' in module["groupes"]:
+        return "TD1"
+    elif 'gr 2' in module["groupes"]:
+        return "TD2"
+    elif 'gr 3' in module["groupes"]:
+        return "TD3"
+    else:
+        return "None"
+
+
+async def send_day_edt(self, ctx, TDGR, daydate, LIC):
+    TD = int(re.sub(r'[^1-4]', '', TDGR))
+
+    if isinstance(daydate, str):
+        if isinstance(date_formatting(daydate), int):
+            await ctx.send("La date {} n'est pas valide !".format(daydate))
+            return
+        else:
+            start_date, end_date = date_formatting(daydate)
+    else:
+        start_date = daydate
+        end_date = start_date + timedelta(days=0)
+
+    
+    modules = request_td_edt(start_date, end_date, TD-1, LIC)
+    
+    # semaine = get_semaine(modules)
+    # desc = "**{}** — {} créneaux ce jour".format(semaine, len(modules)) if len(modules) > 0 else 'Journée libre !'
+    # if len(modules) == 1 : desc = "**{}** — {} créneau ce jour".format(semaine, len(modules))
+    
+    if LIC == 1:
+        lic_txt = 'M1 Info'
+    elif LIC == 2:
+        lic_txt = 'L2 Info'
+    elif LIC == 3:
+        lic_txt = 'L3 Info'
+    
+    duration = calculate_duration(modules)
+
+    desc = f"{len(modules)} créneaux ce jour — {duration} heures au total" if len(modules) > 0 else 'Journée libre !'
+    if len(modules) == 1 : desc = f"{len(modules)} créneau ce jour"
+    
+    embed = discord.Embed(title="<:week:887402631482474506> {} TD{} — {}".format(lic_txt, TD, jour_de_la_semaine(start_date)), description=desc, color=0x3b8ea7, timestamp=datetime.utcnow())
+    embed.set_thumbnail(url=url_jour(start_date.weekday()))
+    embed.set_footer(text="Dernière actualisation", icon_url=self.bot.user.avatar_url)
+    
+    if LIC == 1: # M1
+        for module in modules:
+            if "TD" in module["type"]:
+                tdgrp = get_m1_group(module)
+                embed.add_field(name=module["horaire"], value=f"{module['module']}\n<:L3:881594439552860281> **{tdgrp}** | {module['salle']}\n", inline=False)
+            else:
+                embed.add_field(name=module["horaire"], value="{}\n<:M1:881594437585752085> **{}** | {}\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+    
+    else: # TODO: L3 & L2 daily and weekly calendar
+        for module in modules:
+            if "TD" in module["type"]:
+                if "A" in module["groupes"]:
+                    embed.add_field(name=module["horaire"], value="{}\n{} | {}\n❯ Sous-groupe B en distanciel\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+                else:
+                    embed.add_field(name=module["horaire"], value="{}\n{} | {}\n❯ Sous-groupe A en distanciel\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+            else:
+                embed.add_field(name=module["horaire"], value="{}\n{} | {}\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+    
+    await ctx.channel.send(embed=embed)
+
+
 # EDT Cog Class
 class EDT(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     # Return the calendar for a @TD Group and a given @daydate (default: today date)
-    @commands.command(name="day")
-    async def day(self, ctx, TDGR : str, daydate : str = None):
+    @commands.command(name="dayl3")
+    async def dayl3(self, ctx, TDGR : str, daydate : str = None):
         if not usage_check(ctx):
             print("EDT usage on the wrong guild.")
             return
 
-        TD = int(re.sub(r'[^1-4]', '', TDGR))
-
-        if isinstance(date_formatting(daydate), int):
-            await ctx.send("La date {} n'est pas valide !".format(daydate))
+        await send_day_edt(self, ctx, TDGR, daydate, 3)
+    
+    @commands.command(name="dayl2")
+    async def dayl2(self, ctx, TDGR : str, daydate : str = None):
+        if not usage_check(ctx):
+            print("EDT usage on the wrong guild.")
             return
-        else:
-            start_date, end_date = date_formatting(daydate)
 
-        modules = request_td_edt(start_date, end_date, TD-1)
+        await send_day_edt(self, ctx, TDGR, daydate, 2)
 
-        desc = "{} créneaux ce jour".format(len(modules)) if len(modules) > 0 else 'Journée libre !'
-        if len(modules) == 1 : desc = "{} créneau ce jour".format(len(modules))
+    @commands.command(name="daym1")
+    async def daym1(self, ctx, daydate : str = None):
+        if not usage_check(ctx):
+            print("EDT usage on the wrong guild.")
+            return
 
-        embed = discord.Embed(title="<:week:755154675149439088> TD{} — {}".format(TD, jour_de_la_semaine(start_date)), description=desc, color=0x3b8ea7)
-        for module in modules:
-            embed.add_field(name=module["horaire"], value="{}\n{} | {}\n".format(module["module"][2:len(module["module"])-11], module["type"], module["salle"]) + u"\u2063", inline=False)
-        embed.set_thumbnail(url=url_jour(start_date.weekday()))
-        embed.set_footer(text="Dernière actualisation : {}".format(str(datetime.now())[:16]), icon_url=self.bot.user.avatar_url)
-        await ctx.channel.send(embed=embed)
-
+        await send_day_edt(self, ctx, '1', daydate, 1)
+        
+    
     # Return the week calendar for a @TD Group and a given @daydate (default: today date)
-    @commands.command(name="week")
-    async def week(self, ctx, TDGR : str, daydate : str = None):
+    @commands.command(name="weekm1")
+    async def weekm1(self, ctx, daydate : str = None):
         if not usage_check(ctx):
             print("EDT usage on the wrong guild.")
             return
 
-        TD = int(re.sub(r'[^1-4]', '', TDGR))
+        # TD = int(re.sub(r'[^1-4]', '', TDGR))
 
         if isinstance(date_formatting(daydate), int):
             await ctx.send("La date {} n'est pas valide !".format(daydate))
             return
         else:
             start_date, end_date = date_formatting(daydate)
-
+        
         while start_date.weekday() < 5:
-            end_date = start_date + timedelta(days=0)
-            modules = request_td_edt(start_date, end_date, TD-1)
-
-            desc = "{} créneaux ce jour".format(len(modules)) if len(modules) > 0 else 'Journée libre !'
-            if len(modules) == 1 : desc = "{} créneau ce jour".format(len(modules))
-
-            embed = discord.Embed(title="<:week:755154675149439088> TD{} — {}".format(TD, jour_de_la_semaine(start_date)), description=desc, color=0x3b8ea7)
-            for module in modules:
-                embed.add_field(name=module["horaire"], value="{}\n{} | {}\n".format(module["module"][2:len(module["module"])-11], module["type"], module["salle"]) + u"\u2063", inline=False)
-            embed.set_thumbnail(url=url_jour(start_date.weekday()))
-            embed.set_footer(text="Dernière actualisation : {}".format(str(datetime.now())[:16]), icon_url=self.bot.user.avatar_url)
-            await ctx.channel.send(embed=embed)
+            # end_date = start_date + timedelta(days=0)
+            
+            await send_day_edt(self, ctx, '1', start_date, 1)
             start_date = start_date + timedelta(days=1)
 
+            # modules = request_td_edt(start_date, end_date, TD-1, LIC)
+            
+            # semaine = get_semaine(modules)
+            # desc = "**{}** — {} créneaux ce jour".format(semaine, len(modules)) if len(modules) > 0 else 'Journée libre !'
+            # if len(modules) == 1 : desc = "**{}** — {} créneau ce jour".format(semaine, len(modules))
+            
+            
+            # embed = discord.Embed(title="<:week:887402631482474506> TD{} — {}".format(TD, jour_de_la_semaine(start_date)), description=desc, color=0x3b8ea7)
+
+            # for module in modules:
+            #     if "TD" in module["type"]:
+            #         if "A" in module["groupes"]:
+            #             embed.add_field(name=module["horaire"], value="{}\n{} | {}\n❯ Sous-groupe B en distanciel\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+            #         else:
+            #             embed.add_field(name=module["horaire"], value="{}\n{} | {}\n❯ Sous-groupe A en distanciel\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+            #     else:
+            #         embed.add_field(name=module["horaire"], value="{}\n{} | {}\n".format(module["module"], module["type"], module["salle"]) + u"\u2063", inline=False)
+            # embed.set_thumbnail(url=url_jour(start_date.weekday()))
+            # embed.set_footer(text="Dernière actualisation {}".format(str(datetime.now())[:16]), icon_url=self.bot.user.avatar_url)
+            # await ctx.channel.send(embed=embed)
+            
+            # start_date = start_date + timedelta(days=1)
+
+
     # Just some error sended warnings
-    @week.error
-    @day.error
+    @weekm1.error
+    @dayl2.error
+    @dayl3.error
+    @daym1.error
     async def test_on_error(self, ctx, error):
         await ctx.send("*{}*\n`{}{} [TD] [day/month]`".format(error, ctx.prefix, ctx.command))
 
